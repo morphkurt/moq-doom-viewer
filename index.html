@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+		<title>moq-doom</title>
+		<!-- Force a cross-origin-isolated context (SharedArrayBuffer for the MoQ audio
+		     worklet) on hosts that can't set COOP/COEP headers, e.g. GitHub Pages. -->
+		<script src="./coi-serviceworker.js"></script>
+		<style>
+			:root {
+				--bg: #0d0d0f;
+				--panel: #17171b;
+				--edge: #2a2a30;
+				--accent: #b3121a;
+				--accent-lit: #ff3b30;
+				--text: #e8e8ea;
+				--muted: #8a8a92;
+				/* Content width: fill the viewport, but cap so the 16:9 stage's
+				   height still leaves room for the header + bar. */
+				--w: min(98vw, calc((100vh - 116px) * 16 / 9));
+			}
+			* { box-sizing: border-box; }
+			html, body { margin: 0; height: 100%; }
+			body {
+				background: var(--bg);
+				color: var(--text);
+				font-family: system-ui, -apple-system, sans-serif;
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				gap: 14px;
+				padding: 16px;
+				min-height: 100%;
+				overscroll-behavior: none;
+			}
+			header {
+				display: flex;
+				align-items: center;
+				gap: 14px;
+				width: 100%;
+				max-width: var(--w);
+			}
+			h1 {
+				font-size: 22px;
+				letter-spacing: 3px;
+				margin: 0;
+				color: var(--accent-lit);
+				text-shadow: 0 0 12px rgba(255, 59, 48, 0.4);
+				font-weight: 800;
+			}
+			.grow { flex: 1; }
+			.badge {
+				font-family: ui-monospace, monospace;
+				font-size: 12px;
+				padding: 4px 10px;
+				border-radius: 999px;
+				border: 1px solid var(--edge);
+				color: var(--muted);
+				white-space: nowrap;
+			}
+			.badge.connecting { color: #e6b400; border-color: #5a4b00; }
+			.badge.live { color: #3ddc6d; border-color: #14512a; box-shadow: 0 0 10px rgba(61, 220, 109, 0.25); }
+			.badge.error { color: var(--accent-lit); border-color: #5a1414; }
+
+			#stage {
+				position: relative;
+				width: 100%;
+				max-width: var(--w);
+				aspect-ratio: 16 / 9;
+				background: #000;
+				border: 1px solid var(--edge);
+				border-radius: 8px;
+				overflow: hidden;
+			}
+			moq-watch, moq-watch canvas {
+				position: absolute;
+				inset: 0;
+				width: 100%;
+				height: 100%;
+			}
+			moq-watch canvas { image-rendering: pixelated; object-fit: contain; }
+			#overlay {
+				position: absolute;
+				inset: 0;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				color: var(--muted);
+				font-family: ui-monospace, monospace;
+				font-size: 14px;
+				background: rgba(0, 0, 0, 0.55);
+				pointer-events: none;
+				transition: opacity 0.4s;
+			}
+			#overlay.hidden { opacity: 0; }
+
+			#bar {
+				display: flex;
+				align-items: center;
+				gap: 10px;
+				width: 100%;
+				max-width: var(--w);
+				font-size: 13px;
+				color: var(--muted);
+			}
+			#bar .grow { flex: 1; }
+			button.ctl {
+				background: var(--panel);
+				color: var(--text);
+				border: 1px solid var(--edge);
+				border-radius: 6px;
+				padding: 6px 12px;
+				font-size: 13px;
+				cursor: pointer;
+			}
+			button.ctl:hover { border-color: var(--accent); }
+
+			.stats {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 8px;
+				width: 100%;
+				max-width: var(--w);
+				justify-content: center;
+			}
+			.stat {
+				font-family: ui-monospace, monospace;
+				font-size: 12px;
+				color: var(--muted);
+				background: var(--panel);
+				border: 1px solid var(--edge);
+				border-radius: 6px;
+				padding: 5px 10px;
+			}
+			.stat b { color: var(--text); font-size: 14px; }
+			.stat.warn b { color: #e6b400; }
+			.stat.bad b { color: var(--accent-lit); }
+			.legend {
+				max-width: var(--w);
+				text-align: center;
+				color: var(--muted);
+				font-size: 12.5px;
+				line-height: 1.6;
+			}
+			.legend kbd {
+				background: #23232a;
+				border: 1px solid var(--edge);
+				border-radius: 4px;
+				padding: 1px 6px;
+				font-family: ui-monospace, monospace;
+			}
+		</style>
+	</head>
+	<body>
+		<header>
+			<h1>DOOM</h1>
+			<span class="grow"></span>
+			<span id="status" class="badge connecting">connecting…</span>
+		</header>
+
+		<div id="stage">
+			<moq-watch id="player"><canvas></canvas></moq-watch>
+			<div id="overlay">connecting to stream…</div>
+		</div>
+
+		<div id="bar">
+			<span id="session"></span>
+			<span class="grow"></span>
+			<button id="sound" class="ctl">🔇 Sound off</button>
+			<button id="fs" class="ctl">⛶ Fullscreen</button>
+		</div>
+
+		<div id="stats" class="stats" hidden>
+			<span class="stat"><b id="s-fps">–</b> fps</span>
+			<span class="stat" id="stat-drop"><b id="s-drop">–</b>% dropped</span>
+			<span class="stat"><b id="s-enc">–</b> ms encode</span>
+			<span class="stat" id="stat-lat"><b id="s-lat">–</b> ms latency</span>
+			<span class="stat"><b id="s-viewers">–</b> watching</span>
+		</div>
+
+		<p class="legend">
+			<kbd>↑↓←→</kbd>/<kbd>WASD</kbd> move · <kbd>Ctrl</kbd> fire · <kbd>Space</kbd> use ·
+			<kbd>Shift</kbd> run · <kbd>Enter</kbd>/<kbd>Esc</kbd> menu · <kbd>1–7</kbd> weapons.
+		</p>
+
+		<script type="module" src="/src/main.ts"></script>
+	</body>
+</html>
