@@ -115,12 +115,42 @@ grabFocus();
 addEventListener("click", grabFocus);
 addEventListener("pointerdown", grabFocus);
 
-// --- Fullscreen ---
-document.getElementById("fs")!.addEventListener("click", () => {
+// --- Fullscreen (locks to landscape on mobile for touch play) ---
+document.getElementById("fs")!.addEventListener("click", async () => {
 	const stage = document.getElementById("stage")!;
-	if (document.fullscreenElement) document.exitFullscreen();
-	else stage.requestFullscreen?.().catch(() => {});
+	if (document.fullscreenElement) {
+		await document.exitFullscreen().catch(() => {});
+		return;
+	}
+	await stage.requestFullscreen?.().catch(() => {});
+	// Best-effort: many phones only allow orientation lock while fullscreen.
+	await (screen.orientation as unknown as { lock?: (o: string) => Promise<void> })?.lock?.("landscape").catch(() => {});
 });
+
+// --- Touch controls (mobile overlay) ---
+// Each button holds a single key while pressed. `pointerleave`/`cancel` release
+// so a key never sticks if the thumb slides off.
+for (const b of document.querySelectorAll<HTMLElement>("#touch .tbtn[data-code]")) {
+	const code = b.dataset.code!;
+	const press = (e: Event) => {
+		e.preventDefault();
+		b.classList.add("held");
+		setHeld(code, true);
+	};
+	const release = (e: Event) => {
+		e.preventDefault();
+		b.classList.remove("held");
+		setHeld(code, false);
+	};
+	b.addEventListener("pointerdown", (e) => {
+		(e.target as HTMLElement).releasePointerCapture?.(e.pointerId);
+		press(e);
+	});
+	b.addEventListener("pointerup", release);
+	b.addEventListener("pointercancel", release);
+	b.addEventListener("pointerleave", release);
+	b.addEventListener("contextmenu", (e) => e.preventDefault());
+}
 
 // --- Telemetry rendering ---
 interface StatusMsg {
