@@ -115,16 +115,39 @@ grabFocus();
 addEventListener("click", grabFocus);
 addEventListener("pointerdown", grabFocus);
 
-// --- Fullscreen (locks to landscape on mobile for touch play) ---
-document.getElementById("fs")!.addEventListener("click", async () => {
-	const stage = document.getElementById("stage")!;
-	if (document.fullscreenElement) {
-		await document.exitFullscreen().catch(() => {});
-		return;
+// --- Fullscreen (with iOS fallback + landscape lock) ---
+// iPhone Safari has no Fullscreen API for non-<video> elements, so fall back to
+// a CSS "immersive" mode that fills the viewport (100dvh) instead.
+const stage = document.getElementById("stage")!;
+const immersive = () => stage.classList.contains("immersive");
+const inFullscreen = () => !!document.fullscreenElement || immersive();
+
+async function enterFullscreen() {
+	if (stage.requestFullscreen) {
+		try {
+			await stage.requestFullscreen();
+			// Best-effort: many phones only allow the lock while fullscreen.
+			await (screen.orientation as unknown as { lock?: (o: string) => Promise<void> })?.lock?.("landscape").catch(() => {});
+			return;
+		} catch {
+			/* not supported (iOS) — use the CSS fallback below */
+		}
 	}
-	await stage.requestFullscreen?.().catch(() => {});
-	// Best-effort: many phones only allow orientation lock while fullscreen.
-	await (screen.orientation as unknown as { lock?: (o: string) => Promise<void> })?.lock?.("landscape").catch(() => {});
+	stage.classList.add("immersive");
+	document.body.classList.add("immersive-lock");
+	window.scrollTo(0, 0);
+}
+
+function exitFullscreen() {
+	if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+	stage.classList.remove("immersive");
+	document.body.classList.remove("immersive-lock");
+}
+
+document.getElementById("fs")!.addEventListener("click", () => (inFullscreen() ? exitFullscreen() : enterFullscreen()));
+document.getElementById("exit")!.addEventListener("click", (e) => {
+	e.preventDefault();
+	exitFullscreen();
 });
 
 // --- Touch controls (mobile overlay) ---

@@ -2,7 +2,12 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+		<!-- "Add to Home Screen" launches truly fullscreen (no Safari chrome) on iOS. -->
+		<meta name="apple-mobile-web-app-capable" content="yes" />
+		<meta name="mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+		<meta name="apple-mobile-web-app-title" content="DOOM" />
 		<title>moq-doom</title>
 		<!-- Force a cross-origin-isolated context (SharedArrayBuffer for the MoQ audio
 		     worklet) on hosts that can't set COOP/COEP headers, e.g. GitHub Pages. -->
@@ -149,15 +154,28 @@
 			/* Menu + weapons, top-right. */
 			.topbtns { position: absolute; right: 3%; top: 3%; display: flex; gap: 8px; }
 			.topbtns .tbtn { width: 46px; height: 38px; border-radius: 8px; font-size: 13px; }
-			/* Fullscreen: let the stage fill the screen (landscape for mobile play). */
-			#stage:fullscreen {
+			/* Fullscreen: let the stage fill the screen (landscape for mobile play).
+			   `.immersive` is the iOS fallback: iPhone Safari has no Fullscreen API
+			   for non-<video> elements, so we fill the viewport with fixed
+			   positioning + dynamic viewport height instead. */
+			#stage:fullscreen,
+			#stage.immersive {
+				position: fixed;
+				inset: 0;
 				width: 100vw;
 				height: 100vh;
+				height: 100dvh;
 				max-width: none;
 				aspect-ratio: auto;
 				border: none;
 				border-radius: 0;
+				z-index: 1000;
 			}
+			body.immersive-lock { overflow: hidden; }
+			/* Exit button, only while filling the screen (real or CSS fullscreen). */
+			.tbtn.exit { position: absolute; left: 3%; top: 3%; width: 46px; height: 38px; border-radius: 8px; font-size: 16px; display: none; }
+			#stage:fullscreen .exit,
+			#stage.immersive .exit { display: flex; }
 
 			#bar {
 				display: flex;
@@ -227,6 +245,7 @@
 			<moq-watch id="player"><canvas></canvas></moq-watch>
 			<div id="overlay">connecting to stream…</div>
 			<div id="touch">
+				<button type="button" class="tbtn exit" id="exit" title="Exit fullscreen">✕</button>
 				<div class="dpad">
 					<button type="button" class="tbtn up" data-code="ArrowUp">▲</button>
 					<button type="button" class="tbtn left" data-code="ArrowLeft">◀</button>
