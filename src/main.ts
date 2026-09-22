@@ -47,6 +47,31 @@ soundBtn.addEventListener("click", () => {
 	soundBtn.textContent = player.muted ? "🔇 Sound off" : "🔊 Sound on";
 });
 
+// --- Quality selector (ABR rendition pick) ---
+// The broadcast carries two video renditions (full ~4.3 Mbps, low 640x360
+// ~0.5 Mbps). We steer <moq-watch>'s picker with a bitrate cap on its
+// `controls.target` signal, which composes with the width/height the element
+// derives from its own size:
+//   Auto  - no cap, so the picker adapts to measured bandwidth.
+//   High  - huge cap, so it ignores bandwidth and takes the best that fits.
+//   Low   - cap below the full rendition, pinning the 640x360 rung to save data.
+const QUALITY_BITRATE: Record<string, number | undefined> = {
+	auto: undefined,
+	high: Number.MAX_SAFE_INTEGER,
+	low: 800_000,
+};
+const target = (player as unknown as {
+	controls: { target: { update(fn: (prev: Record<string, unknown>) => Record<string, unknown>): void } };
+}).controls.target;
+const qbtns = [...document.querySelectorAll<HTMLElement>("#quality .qbtn")];
+for (const b of qbtns) {
+	b.addEventListener("click", () => {
+		const q = b.dataset.q!;
+		target.update((prev) => ({ ...prev, bitrate: QUALITY_BITRATE[q] }));
+		for (const other of qbtns) other.classList.toggle("active", other === b);
+	});
+}
+
 // --- Control state ---
 // Keys we forward, by KeyboardEvent.code. Must stay in sync with the backend keymap.
 const FORWARDED = new Set([

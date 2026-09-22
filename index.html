@@ -198,6 +198,26 @@
 			}
 			button.ctl:hover { border-color: var(--accent); }
 
+			/* Quality selector: segmented Auto / High / Low. */
+			.seg {
+				display: inline-flex;
+				border: 1px solid var(--edge);
+				border-radius: 6px;
+				overflow: hidden;
+			}
+			.qbtn {
+				background: var(--panel);
+				color: var(--muted);
+				border: 0;
+				border-left: 1px solid var(--edge);
+				padding: 6px 12px;
+				font-size: 13px;
+				cursor: pointer;
+			}
+			.qbtn:first-child { border-left: 0; }
+			.qbtn:hover { color: var(--text); }
+			.qbtn.active { background: var(--accent); color: #fff; }
+
 			.stats {
 				display: flex;
 				flex-wrap: wrap;
@@ -268,6 +288,11 @@
 		<div id="bar">
 			<span id="session"></span>
 			<span class="grow"></span>
+			<div id="quality" class="seg" role="group" aria-label="Quality">
+				<button type="button" class="qbtn active" data-q="auto">Auto</button>
+				<button type="button" class="qbtn" data-q="high">High</button>
+				<button type="button" class="qbtn" data-q="low">Low</button>
+			</div>
 			<button id="sound" class="ctl">🔇 Sound off</button>
 			<button id="fs" class="ctl">⛶ Fullscreen</button>
 		</div>
