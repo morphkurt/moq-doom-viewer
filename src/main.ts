@@ -73,15 +73,31 @@ for (const b of qbtns) {
 }
 
 // --- Control state ---
-// Keys we forward, by KeyboardEvent.code. Must stay in sync with the backend keymap.
+// Keys we forward, by KeyboardEvent.code. Must stay in sync with the backend
+// keymap (moq-doom/src/keymap.rs) — this is the full keyboard so gameplay,
+// menus, automap, console, chat and cheat codes all work.
 const FORWARDED = new Set([
+	// Arrows.
 	"ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
-	"KeyW", "KeyA", "KeyS", "KeyD",
-	"ControlLeft", "ControlRight", "Space",
-	"ShiftLeft", "ShiftRight", "AltLeft", "AltRight",
-	"Enter", "Escape", "Tab", "Backspace", "Comma", "Period",
-	"Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6", "Digit7",
-	"KeyY", "KeyN",
+	// Full alphabet (movement w/a/s/d/e/q, automap, console, chat, cheats).
+	"KeyA", "KeyB", "KeyC", "KeyD", "KeyE", "KeyF", "KeyG", "KeyH", "KeyI",
+	"KeyJ", "KeyK", "KeyL", "KeyM", "KeyN", "KeyO", "KeyP", "KeyQ", "KeyR",
+	"KeyS", "KeyT", "KeyU", "KeyV", "KeyW", "KeyX", "KeyY", "KeyZ",
+	// Digits (weapon select + cheat entry).
+	"Digit0", "Digit1", "Digit2", "Digit3", "Digit4",
+	"Digit5", "Digit6", "Digit7", "Digit8", "Digit9",
+	// Punctuation.
+	"Comma", "Period", "Minus", "Equal", "BracketLeft", "BracketRight",
+	"Backslash", "Semicolon", "Quote", "Backquote", "Slash",
+	// Action modifiers.
+	"ControlLeft", "ControlRight", "ShiftLeft", "ShiftRight",
+	"AltLeft", "AltRight", "CapsLock", "Space",
+	// Menu / prompts / automap navigation.
+	"Enter", "NumpadEnter", "Escape", "Tab", "Backspace", "Pause",
+	"Insert", "Delete", "Home", "End", "PageUp", "PageDown",
+	// Function keys.
+	"F1", "F2", "F3", "F4", "F5", "F6",
+	"F7", "F8", "F9", "F10", "F11", "F12",
 ]);
 
 const held = new Set<string>();
