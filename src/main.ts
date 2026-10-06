@@ -217,40 +217,78 @@ for (const b of document.querySelectorAll<HTMLElement>("#touch .tbtn[data-code]"
 }
 
 // --- Telemetry rendering ---
+// The backend `status` track is a pure one-to-many broadcast: only backend-side
+// truths that don't vary per viewer (drop rate, encode time, viewer count). The
+// per-viewer metrics (fps, latency) are inferred locally — see startLocalStats.
 interface StatusMsg {
-	fps: number;
 	drops: number;
 	drop_pct: number;
 	encode_ms: number;
 	viewers: number;
-	echo: Record<string, number>;
 }
 const statsEl = document.getElementById("stats")!;
-function renderStats(s: StatusMsg, viewerId: string) {
+function renderStats(s: StatusMsg) {
 	statsEl.hidden = false;
-	document.getElementById("s-fps")!.textContent = s.fps.toFixed(0);
 	document.getElementById("s-drop")!.textContent = String(s.drop_pct);
 	document.getElementById("s-enc")!.textContent = String(s.encode_ms);
 	document.getElementById("s-viewers")!.textContent = String(s.viewers);
 
-	// Control round-trip latency: time since the backend last echoed our command.
-	const sent = s.echo?.[viewerId];
-	const latEl = document.getElementById("s-lat")!;
-	if (sent && sent > 0) {
-		latEl.textContent = String(Math.max(0, Math.round(performance.now() - sent)));
-	} else {
-		latEl.textContent = "–";
-	}
-
-	// Colour the drop/latency chips as they degrade.
+	// Colour the drop chip as it degrades.
 	const drop = document.getElementById("stat-drop")!;
 	drop.className = `stat ${s.drop_pct >= 40 ? "bad" : s.drop_pct >= 15 ? "warn" : ""}`;
 }
 
+// fps and latency inferred locally from the decoded video, since the status track
+// no longer carries them. fps = decoded-frame rate (what THIS client actually
+// gets). latency = how far the newest received frame trails its best-case arrival:
+// the wall−media offset minus its running minimum, so it needs no clock sync. The
+// floor re-anchors if the media timeline jumps backwards (e.g. a backend restart).
+function startLocalStats() {
+	const video = (player as unknown as {
+		video?: {
+			out: {
+				stats: { peek(): { frameCount: number } | undefined };
+				timestamp: { peek(): number | undefined };
+			};
+		};
+	}).video;
+
+	let prevFrames = 0;
+	let prevWhen = performance.now();
+	let latFloor = Infinity;
+	let lastTs = -1;
+
+	setInterval(() => {
+		if (!video) return;
+		const now = performance.now();
+
+		const stats = video.out.stats.peek();
+		if (stats) {
+			if (prevFrames > 0) {
+				const dt = (now - prevWhen) / 1000;
+				const d = stats.frameCount - prevFrames;
+				if (dt > 0 && d >= 0) document.getElementById("s-fps")!.textContent = (d / dt).toFixed(0);
+			}
+			prevFrames = stats.frameCount;
+			prevWhen = now;
+		}
+
+		const ts = video.out.timestamp.peek();
+		if (typeof ts === "number") {
+			if (lastTs >= 0 && ts < lastTs - 2000) latFloor = Infinity; // media timeline rebased
+			lastTs = ts;
+			const offset = now - ts; // wall−media; its minimum is the best-case path
+			latFloor = Math.min(latFloor, offset);
+			document.getElementById("s-lat")!.textContent = String(Math.max(0, Math.round(offset - latFloor)));
+		}
+	}, 1000);
+}
+startLocalStats();
+
 type Established = Moq.Connection.Established;
 
 /** Subscribe to the game's `status` track and render telemetry until it ends. */
-async function watchStatus(conn: Established, viewerId: string, signal: AbortSignal) {
+async function watchStatus(conn: Established, signal: AbortSignal) {
 	const game = conn.consume(Moq.Path.from(`${PREFIX}/game/${NAME}`));
 	const track = game.subscribe("status", { priority: 10 });
 	signal.addEventListener("abort", () => track.close());
@@ -259,7 +297,7 @@ async function watchStatus(conn: Established, viewerId: string, signal: AbortSig
 		for (;;) {
 			const s = await consumer.next();
 			if (!s) break;
-			renderStats(s, viewerId);
+			renderStats(s);
 		}
 	} finally {
 		track.close();
@@ -274,12 +312,12 @@ async function controlSession(conn: Established, signal: AbortSignal) {
 	setStatus("live", `live · controlling as ${viewerId}`);
 	overlay.classList.add("hidden");
 
-	watchStatus(conn, viewerId, signal).catch((err) => {
+	watchStatus(conn, signal).catch((err) => {
 		if (!signal.aborted) console.warn("status error:", err);
 	});
 
-	// Heartbeat: republish state so RTT latency and viewer presence stay fresh
-	// even when no keys change.
+	// Heartbeat: republish state so viewer presence stays fresh even when no keys
+	// change (also keeps the command track alive).
 	const heartbeat = setInterval(publishCmd, 500);
 	signal.addEventListener("abort", () => clearInterval(heartbeat));
 
