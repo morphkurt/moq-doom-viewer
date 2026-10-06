@@ -104,12 +104,17 @@ const held = new Set<string>();
 type Command = { keys: string[]; t: number };
 let producer: Json.Snapshot.Producer<Command> | undefined;
 
+// Whether this page is actively controlling (has clicked Play). Until then it's a
+// pure watcher: no viewer broadcast, no command track, no keyboard capture — so
+// the control path scales with players, not total viewers.
+let playing = false;
+
 /** Publish the current held-key set, stamped with our clock for RTT latency. */
 const publishCmd = () => producer?.update({ keys: [...held], t: performance.now() });
 
 /** Single entry point for all input; publishes only on an actual change. */
 function setHeld(code: string, pressed: boolean) {
-	if (!FORWARDED.has(code)) return;
+	if (!playing || !FORWARDED.has(code)) return;
 	const changed = pressed ? !held.has(code) && (held.add(code), true) : held.delete(code);
 	if (!changed) return;
 	publishCmd();
@@ -127,7 +132,8 @@ function releaseAll() {
 window.addEventListener(
 	"keydown",
 	(e) => {
-		if (!FORWARDED.has(e.code)) return;
+		// Watchers don't capture the keyboard; let the browser behave normally.
+		if (!playing || !FORWARDED.has(e.code)) return;
 		e.preventDefault();
 		e.stopPropagation();
 		if (!e.repeat) setHeld(e.code, true);
@@ -137,7 +143,7 @@ window.addEventListener(
 window.addEventListener(
 	"keyup",
 	(e) => {
-		if (!FORWARDED.has(e.code)) return;
+		if (!playing || !FORWARDED.has(e.code)) return;
 		e.preventDefault();
 		e.stopPropagation();
 		setHeld(e.code, false);
@@ -304,22 +310,20 @@ async function watchStatus(conn: Established, signal: AbortSignal) {
 	}
 }
 
-/** Publish the held-key `command` track and watch telemetry on `conn`. */
-async function controlSession(conn: Established, signal: AbortSignal) {
+/** Publish the held-key `command` track on `conn` until `signal` aborts. */
+async function startControl(conn: Established, signal: AbortSignal) {
 	const viewerId = Math.random().toString(36).slice(2, 8);
 	const broadcast = new Moq.Broadcast.Producer();
 	conn.publish(Moq.Path.from(`${PREFIX}/viewer/${NAME}/${viewerId}`), broadcast);
-	setStatus("live", `live · controlling as ${viewerId}`);
-	overlay.classList.add("hidden");
 
-	watchStatus(conn, signal).catch((err) => {
-		if (!signal.aborted) console.warn("status error:", err);
-	});
-
-	// Heartbeat: republish state so viewer presence stays fresh even when no keys
-	// change (also keeps the command track alive).
+	// Heartbeat: republish state so player presence stays fresh even when no keys
+	// change (also keeps the command track alive). Closing the broadcast on abort
+	// unpublishes us, so the backend sees us leave when we stop playing.
 	const heartbeat = setInterval(publishCmd, 500);
-	signal.addEventListener("abort", () => clearInterval(heartbeat));
+	signal.addEventListener("abort", () => {
+		clearInterval(heartbeat);
+		(broadcast as { close?: () => void }).close?.();
+	});
 
 	try {
 		for (;;) {
@@ -337,31 +341,80 @@ async function controlSession(conn: Established, signal: AbortSignal) {
 	}
 }
 
-// --- Control channel: reuse the <moq-watch> element's connection ---
-// The element already dials a reconnecting MoQ session for the video/audio sub.
-// Rather than open a second dial, we publish held keys and subscribe to `status`
-// over that SAME session. `player.connection` is its reconnecting handle and
-// `.established` is a signal of the live session (undefined while reconnecting);
-// `.watch` fires now and on every change, so each new session gets a fresh
-// publish and the old one is torn down.
+// --- Watch vs. play ---
+// The default page is a pure WATCHER: it consumes video/audio/status over the
+// <moq-watch> element's connection but never publishes. Clicking Play upgrades to
+// a controller — we publish a viewer broadcast + command track on that SAME
+// connection — so the control path (and backend load) scales with active players,
+// not total viewers. `player.connection.established` fires now and on every
+// reconnect; each new session re-establishes watch (always) and control (only if
+// still in play mode).
 const reload = (player as unknown as {
 	connection: { established: { watch(fn: (v: Established | undefined) => void): () => void } };
 }).connection;
 
-let sessionAbort: AbortController | undefined;
+let sessionConn: Established | undefined;
+let sessionAbort: AbortController | undefined; // whole session (telemetry watch)
+let controlAbort: AbortController | undefined; // the publish half (play mode only)
+
+const playBtn = document.getElementById("play")!;
+function refreshPlayUI() {
+	playBtn.textContent = playing ? "⏹ Stop" : "🎮 Play";
+	stage.classList.toggle("playing", playing);
+	if (sessionConn) setStatus("live", playing ? "live · playing" : "live · watching");
+}
+
+/** Start publishing on the current session, if in play mode. */
+function startControlOnSession() {
+	if (!playing || !sessionConn) return;
+	controlAbort?.abort();
+	const ab = new AbortController();
+	controlAbort = ab;
+	startControl(sessionConn, ab.signal).catch((err) => {
+		if (!ab.signal.aborted) console.warn("control error:", err);
+	});
+}
+
+/** Stop publishing (back to pure watcher) without dropping the watch session. */
+function stopControl() {
+	controlAbort?.abort();
+	controlAbort = undefined;
+	producer = undefined;
+	held.clear();
+}
+
+playBtn.addEventListener("click", () => {
+	playing = !playing;
+	if (playing) {
+		grabFocus();
+		startControlOnSession();
+	} else {
+		stopControl();
+	}
+	refreshPlayUI();
+});
+
 reload.established.watch((conn) => {
 	sessionAbort?.abort();
-	sessionAbort = undefined;
+	controlAbort?.abort();
+	controlAbort = undefined;
 	producer = undefined;
+	sessionConn = conn;
 
 	if (!conn) {
 		setStatus("connecting", "connecting…");
 		overlay.classList.remove("hidden");
 		return;
 	}
+	overlay.classList.add("hidden");
+
 	const abort = new AbortController();
 	sessionAbort = abort;
-	controlSession(conn, abort.signal).catch((err) => {
-		if (!abort.signal.aborted) console.warn("control session error:", err);
+	// Always watch telemetry (pure consume) regardless of play mode.
+	watchStatus(conn, abort.signal).catch((err) => {
+		if (!abort.signal.aborted) console.warn("status error:", err);
 	});
+	// Re-establish control if the user had opted into play before (re)connect.
+	startControlOnSession();
+	refreshPlayUI();
 });
